@@ -111,30 +111,65 @@ def seed_products(db: Session) -> int:
                 "products.update",
                 "products.delete",
                 "accounts.manage",
+                "users.manage",
+                "roles.manage",
             ]
         }
         db.add_all(perms.values())
         db.flush()
 
-        admin_role = Role(name="admin", permissions=list(perms.values()))
-        manager_role = Role(
-            name="manager",
-            permissions=[perms["products.create"], perms["products.update"]],
+        super_admin_role = Role(name="super_admin", permissions=list(perms.values()))
+        data_admin_role = Role(
+            name="data_admin",
+            permissions=[perms["users.manage"], perms["roles.manage"]],
+        )
+        buyer_admin_role = Role(
+            name="buyer_admin",
+            permissions=[
+                perms["products.create"],
+                perms["products.update"],
+                perms["products.delete"],
+                perms["accounts.manage"],
+            ],
+        )
+        account_manager_role = Role(
+            name="account_manager",
+            permissions=[
+                perms["products.create"],
+                perms["products.update"],
+                perms["accounts.manage"],
+            ],
         )
         viewer_role = Role(name="viewer", permissions=[])
-        db.add_all([admin_role, manager_role, viewer_role])
+        db.add_all([
+            super_admin_role,
+            data_admin_role,
+            buyer_admin_role,
+            account_manager_role,
+            viewer_role,
+        ])
         db.flush()
 
         users = [
             User(
-                email="admin@example.com",
+                email="super_admin@example.com",
                 hashed_password=hash_password("secret123"),
-                roles=[admin_role],
+                roles=[super_admin_role],
             ),
             User(
-                email="manager@example.com",
+                email="data_admin@example.com",
                 hashed_password=hash_password("secret123"),
-                roles=[manager_role],
+                roles=[data_admin_role],
+            ),
+            User(
+                email="buyer_admin@example.com",
+                hashed_password=hash_password("secret123"),
+                roles=[buyer_admin_role],
+            ),
+            User(
+                email="account_manager@example.com",
+                hashed_password=hash_password("secret123"),
+                roles=[account_manager_role],
             ),
             User(
                 email="viewer@example.com",

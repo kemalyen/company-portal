@@ -20,6 +20,8 @@ from schemas import (
     AccountOut,
     AccountUpdate,
     AccountWithProductsOut,
+    AdminUserCreate,
+    AdminUserUpdate,
     CategoryCreate,
     CategoryOut,
     CategoryUpdate,
@@ -351,6 +353,109 @@ def unassign_product_from_account(account_id: int, product_id: int, db: Session 
         db.commit()
         db.refresh(account)
     return account
+
+
+# --- User Management Routes ---
+
+
+def _resolve_roles(db: Session, role_names: list[str]) -> list[Role]:
+    if not role_names:
+        return []
+    roles = db.scalars(select(Role).where(Role.name.in_(role_names))).all()
+    found = {r.name for r in roles}
+    missing = set(role_names) - found
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Roles not found: {', '.join(sorted(missing))}",
+        )
+    return list(roles)
+
+
+@api_router.get("/users", response_model=list[UserOut])
+def list_users(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("users.manage")),
+):
+    stmt = select(User).options(selectinload(User.roles).selectinload(Role.permissions)).order_by(User.id)
+    return db.scalars(stmt).all()
+
+
+@api_router.get("/users/{user_id}", response_model=UserOut)
+def get_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("users.manage")),
+):
+    stmt = select(User).options(selectinload(User.roles).selectinload(Role.permissions)).where(User.id == user_id)
+    user = db.scalar(stmt)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return user
+
+
+@api_router.post("/users", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+def create_user(
+    payload: AdminUserCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("users.manage")),
+):
+    if db.scalar(select(User).where(User.email == payload.email)):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+
+    roles = _resolve_roles(db, payload.roles)
+    user = User(
+        email=payload.email,
+        hashed_password=hash_password(payload.password),
+        is_active=payload.is_active,
+        roles=roles,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@api_router.patch("/users/{user_id}", response_model=UserOut)
+def update_user(
+    user_id: int,
+    payload: AdminUserUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("users.manage")),
+):
+    stmt = select(User).options(selectinload(User.roles).selectinload(Role.permissions)).where(User.id == user_id)
+    user = db.scalar(stmt)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if payload.email is not None:
+        existing = db.scalar(select(User).where(User.email == payload.email, User.id != user_id))
+        if existing:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+        user.email = payload.email
+    if payload.password is not None:
+        user.hashed_password = hash_password(payload.password)
+    if payload.is_active is not None:
+        user.is_active = payload.is_active
+    if payload.roles is not None:
+        user.roles = _resolve_roles(db, payload.roles)
+
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@api_router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("users.manage")),
+):
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    db.delete(user)
+    db.commit()
 
 
 app.include_router(api_router)

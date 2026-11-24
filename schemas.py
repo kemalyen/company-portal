@@ -81,6 +81,18 @@ class UserCreate(BaseModel):
     password: str = Field(min_length=6, max_length=128)
 
 
+class AdminUserCreate(UserCreate):
+    is_active: bool = True
+    roles: list[str] = []
+
+
+class AdminUserUpdate(BaseModel):
+    email: str | None = Field(default=None, min_length=3, max_length=120)
+    password: str | None = Field(default=None, min_length=6, max_length=128)
+    is_active: bool | None = None
+    roles: list[str] | None = None
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
