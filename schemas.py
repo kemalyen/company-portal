@@ -74,3 +74,23 @@ class AccountOut(BaseModel):
 
 class AccountWithProductsOut(AccountOut):
     products: list[ProductOut] = []
+
+
+class UserCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=120)
+    password: str = Field(min_length=6, max_length=128)
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    is_active: bool
+    role_names: set[str]
+    permission_names: set[str]
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"

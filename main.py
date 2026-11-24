@@ -1,11 +1,20 @@
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, status
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, noload, selectinload
 
+from auth import (
+    create_access_token,
+    get_current_user,
+    hash_password,
+    require_permission,
+    verify_password,
+)
 from database import Base, SessionLocal, engine, get_db
-from models import Account, AccountType, Category, Product
+from models import Account, AccountType, Category, Product, Role, User
 from schemas import (
     AccountCreate,
     AccountOut,
@@ -18,6 +27,9 @@ from schemas import (
     ProductCreate,
     ProductOut,
     ProductUpdate,
+    TokenOut,
+    UserCreate,
+    UserOut,
 )
 from seed import seed_products
 
@@ -36,12 +48,53 @@ api_router = APIRouter(prefix="/api")
 
 @app.get("/")
 def read_root():
-    return {"Hello": "World"}
+    return { datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") }
 
 
 @api_router.get("/items/{item_id}")
 def read_item(item_id: int, q: str | None = None):
     return {"item_id": item_id, "q": q}
+
+
+# --- Auth Routes ---
+
+
+@api_router.post("/auth/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+def register(payload: UserCreate, db: Session = Depends(get_db)):
+    if db.scalar(select(User).where(User.email == payload.email)):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+
+    viewer_role = db.scalar(select(Role).where(Role.name == "viewer"))
+    user = User(
+        email=payload.email,
+        hashed_password=hash_password(payload.password),
+        roles=[viewer_role] if viewer_role else [],
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@api_router.post("/auth/login", response_model=TokenOut)
+def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db),
+):
+    user = db.scalar(select(User).where(User.email == form_data.username))
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    token = create_access_token(subject=user.email)
+    return TokenOut(access_token=token)
+
+
+@api_router.get("/auth/me", response_model=UserOut)
+def read_me(current_user: User = Depends(get_current_user)):
+    return current_user
 
 
 # --- Category Routes ---
@@ -141,7 +194,11 @@ def get_product(product_id: int, db: Session = Depends(get_db)):
 
 
 @api_router.post("/products", response_model=ProductOut, status_code=status.HTTP_201_CREATED)
-def create_product(payload: ProductCreate, db: Session = Depends(get_db)):
+def create_product(
+    payload: ProductCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("products.create")),
+):
     if not db.get(Category, payload.category_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
 
@@ -158,7 +215,12 @@ def create_product(payload: ProductCreate, db: Session = Depends(get_db)):
 
 
 @api_router.patch("/products/{product_id}", response_model=ProductOut)
-def update_product(product_id: int, payload: ProductUpdate, db: Session = Depends(get_db)):
+def update_product(
+    product_id: int,
+    payload: ProductUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("products.update")),
+):
     product = db.get(Product, product_id)
     if not product:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
@@ -176,7 +238,11 @@ def update_product(product_id: int, payload: ProductUpdate, db: Session = Depend
 
 
 @api_router.delete("/products/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_product(product_id: int, db: Session = Depends(get_db)):
+def delete_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("products.delete")),
+):
     product = db.get(Product, product_id)
     if not product:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")

@@ -1,8 +1,9 @@
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from auth import hash_password
 from database import Base, SessionLocal, engine
-from models import Account, AccountType, Category, Product
+from models import Account, AccountType, Category, Permission, Product, Role, User
 
 SAMPLE_CATEGORIES = [
     "Peripherals",
@@ -100,6 +101,48 @@ def seed_products(db: Session) -> int:
         online_mart.products.extend(products[5:10])
 
         db.add_all([tech_supply, global_parts, city_retail, online_mart])
+        db.commit()
+
+    if (db.scalar(select(func.count(User.id))) or 0) == 0:
+        perms = {
+            name: Permission(name=name)
+            for name in [
+                "products.create",
+                "products.update",
+                "products.delete",
+                "accounts.manage",
+            ]
+        }
+        db.add_all(perms.values())
+        db.flush()
+
+        admin_role = Role(name="admin", permissions=list(perms.values()))
+        manager_role = Role(
+            name="manager",
+            permissions=[perms["products.create"], perms["products.update"]],
+        )
+        viewer_role = Role(name="viewer", permissions=[])
+        db.add_all([admin_role, manager_role, viewer_role])
+        db.flush()
+
+        users = [
+            User(
+                email="admin@example.com",
+                hashed_password=hash_password("secret123"),
+                roles=[admin_role],
+            ),
+            User(
+                email="manager@example.com",
+                hashed_password=hash_password("secret123"),
+                roles=[manager_role],
+            ),
+            User(
+                email="viewer@example.com",
+                hashed_password=hash_password("secret123"),
+                roles=[viewer_role],
+            ),
+        ]
+        db.add_all(users)
         db.commit()
 
     return len(products)
